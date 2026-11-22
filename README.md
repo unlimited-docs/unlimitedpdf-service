@@ -7,8 +7,8 @@ A .NET 11 Minimal API for creating and processing PDFs with UnlimitedPDF 1.x.
 Install the .NET 11 SDK, then:
 
 ```sh
-dotnet build UnlimitedPdf.Service.sln
-dotnet test UnlimitedPdf.Service.sln
+dotnet build UnlimitedPdf.Service.slnx
+dotnet test UnlimitedPdf.Service.slnx
 dotnet run --project src/UnlimitedPdf.Service --urls http://localhost:5114
 ```
 
