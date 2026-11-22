@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /source
-COPY Directory.Build.props Directory.Packages.props UnlimitedPdf.Service.sln ./
+COPY Directory.Build.props Directory.Packages.props UnlimitedPdf.Service.slnx ./
 COPY src/UnlimitedPdf.Service/UnlimitedPdf.Service.csproj src/UnlimitedPdf.Service/
 COPY tests/UnlimitedPdf.Service.Tests/UnlimitedPdf.Service.Tests.csproj tests/UnlimitedPdf.Service.Tests/
 RUN dotnet restore src/UnlimitedPdf.Service/UnlimitedPdf.Service.csproj
