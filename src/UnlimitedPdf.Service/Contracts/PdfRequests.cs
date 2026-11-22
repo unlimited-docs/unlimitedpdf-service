@@ -58,3 +58,7 @@ public sealed record HtmlRequest
     [Required] public required string Html { get; init; }
     public string? FileName { get; init; }
 }
+
+public sealed record MergeForm(IFormFile[] Files);
+public sealed record SplitForm(IFormFile File, int? EveryNPages, string? Ranges);
+public sealed record RangeForm(IFormFile File, string Ranges);

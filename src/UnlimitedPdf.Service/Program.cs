@@ -69,7 +69,7 @@ app.Use(async (context, next) =>
 });
 app.MapOpenApi();
 app.MapGet("/health", () => Results.Ok()).WithSummary("Liveness check").WithDescription("Checks that the service is running.")
-    .Produces(StatusCodes.Status200OK).ShortCircuit();
+    .Produces(StatusCodes.Status200OK).ProducesProblem(500).ShortCircuit();
 app.MapPdfEndpoints();
 app.Run();
 

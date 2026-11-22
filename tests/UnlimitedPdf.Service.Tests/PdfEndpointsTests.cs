@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using UnlimitedPDF;
 
 namespace UnlimitedPdf.Service.Tests;
 
@@ -33,7 +34,8 @@ public sealed class PdfEndpointsTests : IClassFixture<WebApplicationFactory<Prog
         using var merge = new MultipartFormDataContent();
         merge.Add(new ByteArrayContent(pdf), "files", "one.pdf");
         merge.Add(new ByteArrayContent(pdf), "files", "two.pdf");
-        await AssertPdf(await _client.PostAsync("/api/pdf/merge", merge));
+        var merged = await AssertPdf(await _client.PostAsync("/api/pdf/merge", merge));
+        Assert.Equal(4, PdfFile.FromBytes(merged).PageCount);
 
         using var split = Form(pdf);
         split.Add(new StringContent("1"), "everyNPages");
@@ -53,10 +55,12 @@ public sealed class PdfEndpointsTests : IClassFixture<WebApplicationFactory<Prog
 
         using var extract = Form(pdf);
         extract.Add(new StringContent("2,1"), "ranges");
-        await AssertPdf(await _client.PostAsync("/api/pdf/extract", extract));
+        var extracted = await AssertPdf(await _client.PostAsync("/api/pdf/extract", extract));
+        Assert.Equal(2, PdfFile.FromBytes(extracted).PageCount);
         using var remove = Form(pdf);
         remove.Add(new StringContent("1"), "ranges");
-        await AssertPdf(await _client.PostAsync("/api/pdf/remove", remove));
+        var remaining = await AssertPdf(await _client.PostAsync("/api/pdf/remove", remove));
+        Assert.Equal(1, PdfFile.FromBytes(remaining).PageCount);
     }
 
     [Fact]
@@ -99,6 +103,55 @@ public sealed class PdfEndpointsTests : IClassFixture<WebApplicationFactory<Prog
         var response = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.DoesNotContain("The PDF request or input is invalid", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task HtmlReportsBlockedRemoteResources()
+    {
+        var response = await _client.PostAsJsonAsync("/api/pdf/html",
+            new { html = "<img src='https://example.invalid/image.png' alt='image'>" });
+        await AssertPdf(response);
+        Assert.NotEmpty(response.Headers.GetValues("X-Pdf-Warnings").Single());
+    }
+
+    [Fact]
+    public async Task TablesCanContinueAcrossPagesAndRespectPageLimit()
+    {
+        var rows = Enumerable.Range(0, 100).Select(i => new[] { "Name " + i, "Value" }).ToArray();
+        var payload = new
+        {
+            pages = new[] { new { blocks = new[] { new
+            {
+                type = "table", x = 50, y = 700, width = 300, rows,
+                headerRowCount = 1, repeatHeaderRows = true
+            } } } }
+        };
+        var pdf = await AssertPdf(await _client.PostAsJsonAsync("/api/pdf/documents", payload));
+        Assert.True(PdfFile.FromBytes(pdf).PageCount > 1);
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?> { ["PdfService:MaxPagesPerDocument"] = "1" })));
+        using var client = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/pdf/documents", payload)).StatusCode);
+    }
+
+    [Fact]
+    public async Task SplitRangesAndOpenApiAreAvailable()
+    {
+        var pdf = await AssertPdf(await _client.PostAsJsonAsync("/api/pdf/documents", new
+        {
+            pages = new[] { new { blocks = Array.Empty<object>() }, new { blocks = Array.Empty<object>() } }
+        }));
+        using var form = Form(pdf);
+        form.Add(new StringContent("2,1"), "ranges");
+        var split = await _client.PostAsync("/api/pdf/split", form);
+        Assert.Equal(HttpStatusCode.OK, split.StatusCode);
+        await using var zipStream = await split.Content.ReadAsStreamAsync();
+        using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        Assert.Equal(2, zip.Entries.Count);
+        var openApi = await _client.GetStringAsync("/openapi/v1.json");
+        Assert.Contains("\"openapi\": \"3.2.0\"", openApi);
+        Assert.Contains("\"everyNPages\"", openApi, StringComparison.OrdinalIgnoreCase);
     }
 
     private static MultipartFormDataContent Form(byte[] pdf)

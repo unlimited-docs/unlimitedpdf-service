@@ -1,11 +1,87 @@
-@UnlimitedPdf.Service_HostAddress = http://localhost:5114
+@host = http://localhost:5114
 
-GET {{UnlimitedPdf.Service_HostAddress}}/openapi/v1.json
-Accept: application/json
-
-###
-
-GET {{UnlimitedPdf.Service_HostAddress}}/weatherforecast/
-Accept: application/json
+GET {{host}}/health
 
 ###
+POST {{host}}/api/pdf/documents
+Content-Type: application/json
+
+{
+  "marginTop": 36,
+  "marginBottom": 36,
+  "header": "Report",
+  "footer": "Page {page} of {pages}",
+  "pages": [
+    { "blocks": [
+      { "type": "text", "text": "Hello PDF", "x": 50, "y": 700, "fontSize": 18 },
+      { "type": "table", "x": 50, "y": 650, "width": 300, "rows": [["Name", "Value"], ["Example", "42"]], "headerRowCount": 1, "repeatHeaderRows": true }
+    ] }
+  ]
+}
+
+###
+POST {{host}}/api/pdf/html
+Content-Type: application/json
+
+{ "html": "<h1>Hello PDF</h1>", "fileName": "hello.pdf" }
+
+###
+POST {{host}}/api/pdf/merge
+Content-Type: multipart/form-data; boundary=pdf-boundary
+
+--pdf-boundary
+Content-Disposition: form-data; name="files"; filename="first.pdf"
+Content-Type: application/pdf
+
+< ./first.pdf
+--pdf-boundary
+Content-Disposition: form-data; name="files"; filename="second.pdf"
+Content-Type: application/pdf
+
+< ./second.pdf
+--pdf-boundary--
+
+###
+POST {{host}}/api/pdf/split
+Content-Type: multipart/form-data; boundary=pdf-boundary
+
+--pdf-boundary
+Content-Disposition: form-data; name="file"; filename="input.pdf"
+Content-Type: application/pdf
+
+< ./input.pdf
+--pdf-boundary
+Content-Disposition: form-data; name="everyNPages"
+
+1
+--pdf-boundary--
+
+###
+POST {{host}}/api/pdf/extract
+Content-Type: multipart/form-data; boundary=pdf-boundary
+
+--pdf-boundary
+Content-Disposition: form-data; name="file"; filename="input.pdf"
+Content-Type: application/pdf
+
+< ./input.pdf
+--pdf-boundary
+Content-Disposition: form-data; name="ranges"
+
+2,1
+--pdf-boundary--
+
+###
+POST {{host}}/api/pdf/remove
+Content-Type: multipart/form-data; boundary=pdf-boundary
+
+--pdf-boundary
+Content-Disposition: form-data; name="file"; filename="input.pdf"
+Content-Type: application/pdf
+
+< ./input.pdf
+--pdf-boundary
+Content-Disposition: form-data; name="ranges"
+
+1
+--pdf-boundary--

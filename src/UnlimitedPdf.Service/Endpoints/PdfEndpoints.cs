@@ -10,7 +10,8 @@ public static class PdfEndpoints
     {
         public RouteGroupBuilder MapPdfEndpoints()
         {
-            var group = endpoints.MapGroup("/api/pdf").RequireRateLimiting("pdf");
+            var group = endpoints.MapGroup("/api/pdf").RequireRateLimiting("pdf")
+                .ProducesProblem(413).ProducesProblem(429).ProducesProblem(504);
             group.MapPost("/documents", async (DocumentRequest request, IPdfService service, HttpContext context) =>
                     Result(await service.CreateAsync(request, context.RequestAborted), context))
                 .WithSummary("Create a PDF").WithDescription("Generate a PDF from pages and text, table or image blocks.")
@@ -22,15 +23,19 @@ public static class PdfEndpoints
             group.MapPost("/merge", async (HttpContext context, IPdfService service) =>
             {
                 if (!IsCsrfValid(context)) return Results.Problem(statusCode: 403);
+                if (!context.Request.HasFormContentType) return Results.Problem(statusCode: 415);
                 var form = await context.Request.ReadFormAsync(context.RequestAborted);
+                if (form.Files.Count != form.Files.GetFiles("files").Count)
+                    return Results.Problem(statusCode: 400, detail: "Use the files field for each upload.");
                 return Result(await service.MergeAsync(form.Files.GetFiles("files"), context.RequestAborted), context);
             }).WithMetadata(new RequireAntiforgeryTokenAttribute(true))
-                .Accepts<IFormFileCollection>("multipart/form-data")
+                .Accepts<MergeForm>("multipart/form-data").ProducesProblem(403).ProducesProblem(415)
                 .WithSummary("Merge PDFs").WithDescription("Merge 2 to 20 files in upload order.")
                 .Produces(StatusCodes.Status200OK, contentType: "application/pdf").ProducesProblem(400).ProducesProblem(500);
             group.MapPost("/split", async (HttpContext context, IPdfService service) =>
             {
                 if (!IsCsrfValid(context)) return Results.Problem(statusCode: 403);
+                if (!context.Request.HasFormContentType) return Results.Problem(statusCode: 415);
                 var form = await context.Request.ReadFormAsync(context.RequestAborted);
                 if (form.Files.Count != 1 || form.Files.GetFile("file") is not { } file)
                     return Results.Problem(statusCode: 400, detail: "Provide one file.");
@@ -40,7 +45,7 @@ public static class PdfEndpoints
                 int? every = raw.Length == 0 ? null : int.Parse(raw);
                 return Result(await service.SplitAsync(file, every, form["ranges"].ToString(), context.RequestAborted), context);
             }).WithMetadata(new RequireAntiforgeryTokenAttribute(true))
-                .Accepts<IFormFile>("multipart/form-data")
+                .Accepts<SplitForm>("multipart/form-data").ProducesProblem(403).ProducesProblem(415)
                 .WithSummary("Split a PDF").WithDescription("Split by page count or ranges into a ZIP archive.")
                 .Produces(StatusCodes.Status200OK, contentType: "application/zip").ProducesProblem(400).ProducesProblem(500);
             MapRanges(group, "/extract", false);
@@ -54,12 +59,13 @@ public static class PdfEndpoints
         group.MapPost(route, async (HttpContext context, IPdfService service) =>
         {
             if (!IsCsrfValid(context)) return Results.Problem(statusCode: 403);
+            if (!context.Request.HasFormContentType) return Results.Problem(statusCode: 415);
             var form = await context.Request.ReadFormAsync(context.RequestAborted);
             if (form.Files.Count != 1 || form.Files.GetFile("file") is not { } file)
                 return Results.Problem(statusCode: 400, detail: "Provide one file.");
             return Result(await service.ExtractAsync(file, form["ranges"].ToString(), remove, context.RequestAborted), context);
         }).WithMetadata(new RequireAntiforgeryTokenAttribute(true))
-            .Accepts<IFormFile>("multipart/form-data")
+            .Accepts<RangeForm>("multipart/form-data").ProducesProblem(403).ProducesProblem(415)
             .WithSummary(remove ? "Remove pages" : "Extract pages")
             .WithDescription(remove ? "Remove the specified page ranges." : "Extract the specified page ranges in order.")
             .Produces(StatusCodes.Status200OK, contentType: "application/pdf").ProducesProblem(400).ProducesProblem(500);
