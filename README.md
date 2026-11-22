@@ -64,10 +64,15 @@ curl can omit `Origin` and Fetch Metadata headers; browser requests must be same
 service does not configure cross-origin browser access or authentication.
 
 The `PdfService` configuration section controls `MaxUploadSize` (50 MiB total request body),
+`MaxOutputSize` (50 MiB, also applied to the combined uncompressed split parts),
 `MaxFilesPerMerge` (20, capped at 20), `MaxPagesPerDocument` (500), and
 `RequestTimeoutSeconds` (120). Environment variables can override these, e.g.
 `PdfService__MaxUploadSize=10485760`. A fixed per-IP limit allows 60 PDF requests per minute.
 Deploy behind a trusted proxy configured to forward client addresses if per-client limiting is
 required behind a load balancer. PDF and ZIP responses are not response-compressed.
+
+UnlimitedPDF's one-call HTML converter does not expose a page cap during layout; HTML output is
+checked against `MaxPagesPerDocument` after conversion. For untrusted HTML, also enforce process
+memory and CPU limits at deployment.
 
 See `src/UnlimitedPdf.Service/UnlimitedPdf.Service.http` for HTTP client samples.

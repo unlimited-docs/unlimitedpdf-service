@@ -27,6 +27,7 @@ public sealed partial class PdfService(
                 MarginTop = request.MarginTop, MarginBottom = request.MarginBottom,
                 MarginLeft = request.MarginLeft, MarginRight = request.MarginRight
             };
+            document.Body.MaxPages = _limits.MaxPagesPerDocument;
             if (request.Header is not null)
             {
                 document.Header.Height = 20;
@@ -54,8 +55,9 @@ public sealed partial class PdfService(
                     });
                 }
             }
-            await using var output = new MemoryStream();
-            await document.SaveAsync(output, cancellationToken);
+            await using var output = new LimitedMemoryStream(_limits.MaxOutputSize);
+            try { await document.SaveAsync(output, cancellationToken); }
+            catch (InvalidOperationException) { throw new ArgumentException("The document layout is invalid or exceeds the page limit."); }
             await CheckOutputPagesAsync(output, cancellationToken);
             return new PdfResult(output.ToArray(), "application/pdf", "document.pdf");
         });
@@ -65,8 +67,9 @@ public sealed partial class PdfService(
         {
             Validate(request);
             var html = PdfHtml.FromString(request.Html, new PdfHtmlLoadOptions { ResourceResolver = _ => null });
-            await using var output = new MemoryStream();
-            await PdfOperations.ConvertHtmlAsync(html, output, cancellationToken: cancellationToken);
+            await using var output = new LimitedMemoryStream(_limits.MaxOutputSize);
+            try { await PdfOperations.ConvertHtmlAsync(html, output, cancellationToken: cancellationToken); }
+            catch (InvalidOperationException) { throw new ArgumentException("The HTML layout is invalid."); }
             await CheckOutputPagesAsync(output, cancellationToken);
             var warnings = string.Join(", ", html.Warnings.Select(w => w.Kind.ToString()).Distinct());
             return new PdfResult(output.ToArray(), "application/pdf", SafeFileName(request.FileName), warnings);
@@ -86,7 +89,7 @@ public sealed partial class PdfService(
                 if (pages > _limits.MaxPagesPerDocument) throw new ArgumentException("The merged document has too many pages.");
                 inputs.Add(input);
             }
-            await using var output = new MemoryStream();
+            await using var output = new LimitedMemoryStream(_limits.MaxOutputSize);
             await PdfOperations.MergeAsync(output, inputs, cancellationToken);
             return new PdfResult(output.ToArray(), "application/pdf", "merged.pdf");
         });
@@ -98,7 +101,8 @@ public sealed partial class PdfService(
                 throw new ArgumentException("Provide either a positive everyNPages or ranges.");
             var input = await LoadAsync(file, cancellationToken);
             var parsed = string.IsNullOrWhiteSpace(ranges) ? null : ParseRanges(ranges, input.PageCount);
-            await using var output = new MemoryStream();
+            await using var output = new LimitedMemoryStream(_limits.MaxOutputSize);
+            var budget = new OutputBudget(_limits.MaxOutputSize);
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
             {
                 Stream? entry = null;
@@ -107,7 +111,7 @@ public sealed partial class PdfService(
                     Stream Open(PdfSplitPart part)
                     {
                         entry?.Dispose();
-                        return entry = zip.CreateEntry(part.FileName).Open();
+                        return entry = new BudgetStream(zip.CreateEntry(part.FileName).Open(), budget);
                     }
                     if (parsed is not null)
                         await PdfOperations.SplitAsync(input, parsed, Open, cancellationToken);
@@ -124,7 +128,7 @@ public sealed partial class PdfService(
         {
             var input = await LoadAsync(file, cancellationToken);
             var parsed = ParseRanges(ranges, input.PageCount);
-            await using var output = new MemoryStream();
+            await using var output = new LimitedMemoryStream(_limits.MaxOutputSize);
             if (remove)
                 await PdfOperations.RemoveAsync(input, parsed, output, cancellationToken);
             else
@@ -203,17 +207,25 @@ public sealed partial class PdfService(
     private async Task<PdfOutcome> ExecuteAsync(Func<Task<PdfResult>> operation)
     {
         try { return await operation(); }
-        catch (Exception ex) when (ex is ArgumentException or FormatException or PdfFileException or PdfImageException or PdfHtmlException)
+        catch (Exception ex) when (ex is ArgumentException or FormatException or PdfFileException or PdfImageException or PdfHtmlException || HasOutputLimitError(ex))
         {
             LogInvalid(logger, ex.GetType().Name);
             return new ValidationError("The PDF request or input is invalid.");
         }
+
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             LogFailed(logger, ex.GetType().Name);
             return new ProcessingError();
         }
+    }
+
+    private static bool HasOutputLimitError(Exception exception)
+    {
+        for (Exception? error = exception; error is not null; error = error.InnerException)
+            if (error is OutputLimitException) return true;
+        return false;
     }
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Invalid PDF request: {ErrorType}")]

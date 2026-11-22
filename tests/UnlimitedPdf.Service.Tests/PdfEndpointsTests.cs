@@ -154,6 +154,37 @@ public sealed class PdfEndpointsTests : IClassFixture<WebApplicationFactory<Prog
         Assert.Contains("\"everyNPages\"", openApi, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task SplitOutputBudgetLimitsRepeatedRanges()
+    {
+        var pdf = await AssertPdf(await _client.PostAsJsonAsync("/api/pdf/documents", new
+        {
+            pages = new[] { new { blocks = Array.Empty<object>() } }
+        }));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?> { ["PdfService:MaxOutputSize"] = (pdf.Length * 3).ToString() })));
+        using var client = factory.CreateClient();
+        using var form = Form(pdf);
+        form.Add(new StringContent(string.Join(",", Enumerable.Repeat("1", 20))), "ranges");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync("/api/pdf/split", form)).StatusCode);
+    }
+
+    [Fact]
+    public async Task InvalidTableLayoutReturnsBadRequest()
+    {
+        var rows = Enumerable.Range(0, 101).Select(i => new[] { $"Row {i}" }).ToArray();
+        var response = await _client.PostAsJsonAsync("/api/pdf/documents", new
+        {
+            pages = new[] { new { blocks = new[] { new
+            {
+                type = "table", x = 50, y = 700, width = 300, rows,
+                headerRowCount = 100, repeatHeaderRows = true
+            } } } }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private static MultipartFormDataContent Form(byte[] pdf)
     {
         var form = new MultipartFormDataContent();
